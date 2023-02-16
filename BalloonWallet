@@ -1,0 +1,50 @@
+use std::fs::{File, OpenOptions};
+use std::io::{Write, BufReader, BufRead};
+use rand::rngs::OsRng;
+use rand::RngCore;
+use sha2::{Sha256, Digest};
+use bip39::{Mnemonic, Language, Seed};
+use bip39::Entropy;
+
+const WALLET_FILE: &str = "wallet.txt";
+
+fn main() {
+    // Check if a wallet already exists
+    if let Ok(file) = File::open(WALLET_FILE) {
+        let reader = BufReader::new(file);
+        let lines: Vec<String> = reader.lines().map(|l| l.unwrap()).collect();
+
+        if lines.len() == 2 {
+            println!("Wallet already exists with address: {}", &lines[0]);
+            return;
+        }
+    }
+
+    // Generate a new wallet
+    let mut entropy = [0; 32];
+    OsRng.fill_bytes(&mut entropy);
+
+    let mnemonic = Mnemonic::from_entropy(&Entropy::Raw(&entropy), Language::English)
+        .expect("Could not generate mnemonic phrase");
+
+    let seed = Seed::new(&mnemonic, "");
+
+    let mut address = [0; 32];
+    let mut hasher = Sha256::new();
+    hasher.update(&seed.as_bytes()[..32]);
+    let private_key = hasher.finalize();
+    hasher.update(&private_key);
+    hasher.update(&address);
+    address.copy_from_slice(&hasher.finalize());
+
+    let mut writer = OpenOptions::new().write(true).create(true).open(WALLET_FILE).unwrap();
+    writer.write_all(&mnemonic.to_string().as_bytes()).unwrap();
+    writer.write_all(b"\n").unwrap();
+    writer.write_all(&address).unwrap();
+    writer.write_all(b"\n").unwrap();
+    writer.write_all(&private_key).unwrap();
+    writer.write_all(b"\n").unwrap();
+
+    println!("New wallet generated with address: {}", hex::encode(address));
+    println!("Mnemonic phrase: {}", mnemonic.to_string());
+}
