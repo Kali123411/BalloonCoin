@@ -1,0 +1,371 @@
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Instant, Duration};
+use std::collections::HashMap;
+use sha2::{Sha256, Digest};
+use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
+
+// Define the maximum supply of coins
+const MAX_SUPPLY: u64 = 21_000_000;
+
+// Define the block reward for each block
+const BLOCK_REWARD: u64 = 50;
+
+// Define the halving interval in blocks
+const HALVING_INTERVAL: u64 = 210_000;
+
+// Define the target block time in seconds
+const BLOCK_TIME: u64 = 60;
+
+// Define the maximum number of transactions per block
+const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
+
+// Define the maximum number of connections per node
+const MAX_CONNECTIONS: usize = 10;
+
+// Define the maximum number of unconfirmed transactions in the pool
+const MAX_UNCONFIRMED_TRANSACTIONS: usize = 1000;
+
+// Define the port number to listen for incoming connections
+const LISTEN_PORT: u16 = 8333;
+
+// Define the version number of the protocol
+const PROTOCOL_VERSION: u32 = 70015;
+
+// Define the magic bytes for the Ballooncoin network
+const MAGIC_BYTES: [u8; 4] = [0xFA, 0xBF, 0xB5, 0xDA];
+
+// Define the struct for a Ballooncoin transaction
+#[derive(Clone, Serialize, Deserialize)]
+struct Transaction {
+    inputs: Vec<Input>,
+    outputs: Vec<Output>,
+    timestamp: DateTime<Utc>,
+    signature: Vec<u8>,
+}
+
+// Define the struct for a Ballooncoin transaction input
+#[derive(Clone, Serialize, Deserialize)]
+struct Input {
+    transaction_hash: Vec<u8>,
+    output_index: usize,
+    signature: Vec<u8>,
+}
+
+// Define the struct for a Ballooncoin transaction output
+#[derive(Clone, Serialize, Deserialize)]
+struct Output {
+    address: Vec<u8>,
+    value: u64,
+}
+
+// Define the struct for a Ballooncoin block header
+#[derive(Clone, Serialize, Deserialize)]
+struct BlockHeader {
+    version: u32,
+    prev_block_hash: Vec<u8>,
+    merkle_root: Vec<u8>,
+    timestamp: u32,
+    nonce: u32,
+}
+
+// Define the struct for a Ballooncoin block
+#[derive(Clone, Serialize, Deserialize)]
+struct Block {
+    header: BlockHeader,
+    transactions: Vec<Transaction>,
+}
+
+// Define the struct for a Ballooncoin node
+struct Node {
+    address: String,
+    peers: Vec<String>,
+    mempool: Arc<Mutex<HashMap<Vec<u8>, Transaction>>>,
+    blockchain: Arc<Mutex<Vec<Block>>>,
+}
+
+impl Node {
+    // Start the node and listen for incoming connections
+    fn start(&self) {
+        // Spawn a new thread to handle incoming connections
+        let mempool = self.mempool.clone();
+        let blockchain = self.blockchain.clone();
+        let listen_thread = thread::spawn(move || {
+            // TODO: implement incoming connection handling
+        });
+
+        // Spawn a new thread to mine new blocks
+        let mining_thread = self.start_mining();
+
+        // Wait for both threads to exit
+        listen_thread.join().unwrap();
+        mining_thread.join().unwrap();
+    }
+
+    // Start mining new blocks
+    fn start_mining(&self) -> thread::JoinHandle<()> {
+        let mempool = self.mempool.clone();
+        let blockchain = self.block
+    let block_time = Duration::from_secs(BLOCK_TIME);
+    let mining_thread = thread::spawn(move || {
+        let mut rng = rand::thread_rng();
+        let mut nonce = rng.gen_range(0, u32::MAX);
+        let mut last_block_time = Instant::now();
+
+        loop {
+            // Check if the block time has elapsed
+            if Instant::now().duration_since(last_block_time) >= block_time {
+                // Generate a new block if there are any transactions in the mempool
+                let mut mempool = mempool.lock().unwrap();
+                let mut blockchain = blockchain.lock().unwrap();
+                if !mempool.is_empty() {
+                    // Create a new block and add the coinbase transaction
+                    let mut block = Block {
+                        header: BlockHeader {
+                            version: PROTOCOL_VERSION,
+                            prev_block_hash: blockchain.last().unwrap().hash(),
+                            merkle_root: vec![],
+                            timestamp: Utc::now().timestamp() as u32,
+                            nonce: nonce,
+                        },
+                        transactions: vec![],
+                    };
+                    let coinbase = Transaction {
+                        inputs: vec![],
+                        outputs: vec![Output {
+                            address: vec![],
+                            value: BLOCK_REWARD,
+                        }],
+                        timestamp: Utc::now(),
+                        signature: vec![],
+                    };
+                    block.transactions.push(coinbase);
+
+                    // Add as many transactions from the mempool as possible
+                    let mut transaction_count = 0;
+                    for (_, transaction) in mempool.iter() {
+                        if transaction_count >= MAX_TRANSACTIONS_PER_BLOCK {
+                            break;
+                        }
+                        if self.validate_transaction(&transaction) {
+                            block.transactions.push(transaction.clone());
+                            transaction_count += 1;
+                        }
+                    }
+
+                    // Update the merkle root and hash the block header
+                    block.header.merkle_root = self.calculate_merkle_root(&block.transactions);
+                    let block_hash = self.hash_block_header(&block.header);
+
+                    // Check if the block meets the difficulty target
+                    if self.check_difficulty(&block_hash) {
+                        // Add the block to the blockchain and remove the transactions from the mempool
+                        blockchain.push(block);
+                        for transaction in block.transactions.iter().skip(1) {
+                            mempool.remove(&self.hash_transaction(&transaction));
+                        }
+
+                        // Update the nonce and reset the last block time
+                        nonce = rng.gen_range(0, u32::MAX);
+                        last_block_time = Instant::now();
+
+                        // Check if a halving event has occurred
+                        if blockchain.len() as u64 % HALVING_INTERVAL == 0 {
+                            // Calculate the new block reward and check if it's below the minimum
+                            let block_reward = BLOCK_REWARD >> (blockchain.len() / HALVING_INTERVAL);
+                            if block_reward > 0 {
+                                // Add the coinbase output for the new block reward
+                                let coinbase_output = Output {
+                                    address: vec![],
+                                    value: block_reward,
+                                };
+                                blockchain.last_mut().unwrap().transactions[0].outputs.push(coinbase_output);
+                            }
+                        }
+
+                        // Check if the maximum supply has been reached
+                        if blockchain.len() as u64 * BLOCK_REWARD > MAX_SUPPLY {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    mining_thread
+}
+
+// Calculate the merkle root of a list of transactions
+fn calculate_merkle_root(&self, transactions: &Vec<Transaction>) -> Vec<u8> {
+    let mut hashes = transactions.iter().map(|transaction| self.hash_transaction(&transaction)).collect::<Vec<_>>();
+    while hashes.len() > 1 {
+        if hashes.len() % 2 == 1 {
+            hashes.push(hashes.last
+            .unwrap()
+            .clone();
+        }
+
+        let mut new_hashes = Vec::new();
+        for chunk in hashes.chunks(2) {
+            let mut hasher = Sha256::new();
+            let (left, right) = (chunk[0].clone(), chunk[1].clone());
+            hasher.update(&left);
+            hasher.update(&right);
+            new_hashes.push(hasher.finalize().to_vec());
+        }
+        hashes = new_hashes;
+    }
+
+    hashes[0].clone()
+}
+
+// Calculate the hash of a transaction
+fn hash_transaction(&self, transaction: &Transaction) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(&bincode::serialize(&transaction).unwrap());
+    hasher.finalize().to_vec()
+}
+
+// Hash the header of a block
+fn hash_block_header(&self, header: &BlockHeader) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(&bincode::serialize(&header).unwrap());
+    hasher.finalize().to_vec()
+}
+
+// Check if a block hash meets the difficulty target
+fn check_difficulty(&self, hash: &Vec<u8>) -> bool {
+    let target = self.difficulty_target();
+    let hash_int = BigUint::from_bytes_be(hash);
+    let target_int = BigUint::from_bytes_be(&target);
+    hash_int <= target_int
+}
+
+// Get the difficulty target for the current block height
+fn difficulty_target(&self) -> Vec<u8> {
+    let blockchain = self.blockchain.lock().unwrap();
+    let last_block = blockchain.last().unwrap();
+    let last_difficulty = &last_block.header.difficulty;
+
+    // Calculate the new difficulty based on the last block and the block time
+    let time_difference = last_block.timestamp - blockchain[blockchain.len() - BLOCK_TIME_INTERVAL as usize].timestamp;
+    let expected_time_difference = BLOCK_TIME * BLOCK_TIME_INTERVAL;
+    let mut new_difficulty = last_difficulty.clone();
+    if time_difference > expected_time_difference {
+        let adjustment = last_difficulty * BigUint::from(expected_time_difference) / BigUint::from(time_difference);
+        new_difficulty = last_difficulty + adjustment;
+    } else if time_difference < expected_time_difference {
+        let adjustment = last_difficulty * BigUint::from(time_difference) / BigUint::from(expected_time_difference);
+        new_difficulty = last_difficulty - adjustment;
+    }
+
+    // Make sure the new difficulty is within the acceptable range
+    let max_difficulty = BigUint::from_bytes_be(&[0xff; 32]);
+    if new_difficulty > max_difficulty {
+        new_difficulty = max_difficulty;
+    } else if new_difficulty.is_zero() {
+        new_difficulty = BigUint::from(1u32);
+    }
+
+    new_difficulty.to_bytes_be()
+}
+}
+
+fn main() {
+// Create the blockchain, mempool, and node
+let blockchain = Arc::new(Mutex::new(vec![Block::genesis()]));
+let mempool = Arc::new(Mutex::new(HashMap::new()));
+let node = Node::new(blockchain.clone(), mempool.clone());
+// Start the node and mining threads
+node.start();
+let mining_thread = node.start_mining();
+
+// Listen for incoming connections
+let listener = TcpListener::bind("0.0.0.0:8333").unwrap();
+for stream in listener.incoming() {
+    let mut node_clone = node.clone();
+    thread::spawn(move || {
+        let mut stream = stream.unwrap();
+        loop {
+            let message = read_message
+use std::collections::HashMap;
+
+// Define the blockchain struct
+pub struct Blockchain {
+    pub chain: Vec<Block>,
+    pub current_transactions: Vec<Transaction>,
+    pub nodes: HashSet<String>,
+    pub difficulty: u32,
+    pub max_coinbase: u64,
+    pub total_coinbase: u64,
+    pub halving_period: u32,
+}
+
+impl Blockchain {
+    // Implement the mining method
+    pub fn mine_block(&mut self, miner_address: String) -> Block {
+        let previous_hash = self.last_block().hash();
+        let mut nonce = 0;
+        loop {
+            let timestamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let block = Block::new(
+                timestamp,
+                self.current_transactions.clone(),
+                self.difficulty,
+                previous_hash.clone(),
+                nonce,
+            );
+            if block.hash().starts_with(&"0".repeat(self.difficulty as usize)) {
+                let mut coinbase = Transaction {
+                    sender: String::from("COINBASE"),
+                    recipient: miner_address.clone(),
+                    amount: self.calculate_coinbase(),
+                };
+                coinbase.sign(&String::from("COINBASE"));
+                self.current_transactions.push(coinbase);
+                self.chain.push(block.clone());
+                self.total_coinbase += block.transactions[0].amount;
+                if self.total_coinbase >= self.max_coinbase {
+                    panic!("Maximum coinbase reached");
+                }
+                return block;
+            }
+            nonce += 1;
+        }
+    }
+
+    // Implement the calculate coinbase method
+    fn calculate_coinbase(&self) -> u64 {
+        let total_blocks = self.chain.len() as u32;
+        let halvings = (total_blocks / self.halving_period) as u64;
+        let coinbase = 50u64 * (10u64).pow(8) / (2u64).pow(halvings);
+        coinbase
+    }
+}
+
+fn main() {
+    let mut blockchain = Blockchain {
+        chain: vec![Block::genesis()],
+        current_transactions: vec![],
+        nodes: HashSet::new(),
+        difficulty: 2,
+        max_coinbase: 21_000_000_0000,
+        total_coinbase: 0,
+        halving_period: 210_000,
+    };
+    // Add nodes to the blockchain
+    blockchain.register_node(String::from("http://localhost:5000"));
+    blockchain.register_node(String::from("http://localhost:5001"));
+
+    // Mine a block
+    let block = blockchain.mine_block(String::from("miner_address"));
+    println!("Block mined: {:?}", block);
+
+    // Print the blockchain
+    println!("Blockchain: {:?}", blockchain.chain);
+}
