@@ -1,0 +1,60 @@
+use std::net::{TcpStream, SocketAddr};
+use std::io::{Read, Write};
+use std::time::Duration;
+use std::io::ErrorKind;
+use openssl::ssl::{SslConnectorBuilder, SslMethod};
+
+const BUFFER_SIZE: usize = 1024;
+
+fn main() {
+    let server_address = "127.0.0.1:8000";
+    let timeout = Duration::from_secs(5);
+
+    // Set up SSL/TLS encryption
+    let mut builder = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
+    builder.set_ca_file("ca_cert.pem").unwrap();
+    let connector = builder.build();
+    
+    // Connect to the Ballooncoin node
+    match TcpStream::connect_timeout(&server_address.parse::<SocketAddr>().unwrap(), timeout) {
+        Ok(stream) => {
+            let mut stream = connector.connect(server_address, stream).unwrap();
+
+            println!("Connected to Ballooncoin node at {}", server_address);
+
+            // Authenticate with the node
+            let auth_request = "auth:username:password".as_bytes();
+            stream.write_all(auth_request).expect("Failed to send authentication request");
+
+            let mut buffer = [0; BUFFER_SIZE];
+            let auth_response_size = stream.read(&mut buffer).expect("Failed to read authentication response");
+            let auth_response = String::from_utf8_lossy(&buffer[0..auth_response_size]);
+
+            if auth_response != "authenticated" {
+                panic!("Failed to authenticate with Ballooncoin node: {}", auth_response);
+            }
+
+            // Send a request to get the blockchain
+            let get_chain_request = "get_chain".as_bytes();
+            stream.write_all(get_chain_request).expect("Failed to send request");
+
+            let chain_response_size = stream.read(&mut buffer).expect("Failed to read response");
+            let chain_response = String::from_utf8_lossy(&buffer[0..chain_response_size]);
+
+            println!("Received response: {}", chain_response);
+        }
+        Err(e) => {
+            match e.kind() {
+                ErrorKind::TimedOut => {
+                    println!("Failed to connect to Ballooncoin node: timed out");
+                }
+                ErrorKind::ConnectionRefused => {
+                    println!("Failed to connect to Ballooncoin node: connection refused");
+                }
+                _ => {
+                    println!("Failed to connect to Ballooncoin node: {:?}", e);
+                }
+            }
+        }
+    }
+}
